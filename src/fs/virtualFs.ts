@@ -97,6 +97,32 @@ export class VirtualFs implements IFileSystem {
     return new Set(Object.keys(this.tree));
   }
 
+  /** The absolute path this FS is mounted at (e.g. "/docs"). */
+  getMountPoint(): string {
+    return this.mountPoint;
+  }
+
+  /**
+   * Normalise a caller-supplied path to a mount-relative path understood by
+   * the internal readFile/readdir/stat methods.
+   *
+   * Accepts either:
+   *   - An absolute path rooted at the mount point (`/docs/auth/oauth.md`).
+   *   - A path already relative to the mount (`/auth/oauth.md`, `auth/oauth.md`).
+   *
+   * Used by HTTP adapters that speak in shell-absolute paths but talk to the
+   * inner VirtualFs directly (bypassing MountableFs prefix stripping).
+   */
+  toMountRelative(path: string): string {
+    const norm = normalizePath(path);
+    if (this.mountPoint === "/" || this.mountPoint === "") return norm;
+    if (norm === this.mountPoint) return "/";
+    if (norm.startsWith(this.mountPoint + "/")) {
+      return norm.slice(this.mountPoint.length);
+    }
+    return norm; // already mount-relative or outside mount — let downstream decide
+  }
+
   /** Resolve an absolute path inside this FS to a slug, or null for directories. */
   pathToSlug(absPath: string): string | null {
     // `absPath` here is a full shell-absolute path like "/docs/auth/oauth.md".

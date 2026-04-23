@@ -78,7 +78,13 @@ VFS_BACKEND=sqlite pnpm probe
 VFS_BACKEND=chroma CHROMA_COLLECTION=vfs_docs \
   pnpm ask "how do I authenticate with OAuth and refresh the token?"
 # 期望：4 轮内作答，引用 /docs/auth/oauth.md + /docs/auth/token-refresh.md
+
+# 临时切到 SQLite（--db 会强制覆盖 VFS_BACKEND）：
+pnpm ask --db ./data/vfs.db "how do I authenticate with OAuth?"
+# 日志第一行 backend=sqlite(./data/vfs.db) 说明 --db 生效
 ```
+
+> **`--db` 精确语义**：一旦传入 `--db <path>`，无论 `VFS_BACKEND` 设成什么都会强制走 SQLite。没传 `--db` 时才回退到 env。
 
 ### 2.7 启动 HTTP server（供 CrewAI / LangChain 接入）
 
@@ -88,6 +94,13 @@ VFS_BACKEND=chroma CHROMA_COLLECTION=vfs_docs pnpm server
 curl http://127.0.0.1:7801/v1/health
 # → {"ok":true,"mount":"/docs","backend":"chroma(http://127.0.0.1:8000 :: vfs_docs)"}
 ```
+
+> **`/v1/fs/*` 路径兼容**：`ls` / `cat` / `grep` 同时接受以下三种写法：
+> - 完全限定 mount：`/docs/auth/oauth.md`
+> - mount-relative 绝对：`/auth/oauth.md`
+> - 相对：`auth/oauth.md`
+>
+> 内部会走 `VirtualFs.toMountRelative()` 归一化。grep 会把输入提升回 shell-absolute 再进 bash。
 
 ### 2.8 CrewAI + Qwen E2E demo
 
@@ -358,6 +371,9 @@ whereDocument: { $regex: `(?i)${pattern}` }
 | 决策 | 选择 | 拒绝的备选 | 理由 |
 |---|---|---|---|
 | grep 路径前缀过滤 | PathTree 解析 → `$in` 列表 | Chroma `$regex on metadata` | Chroma 元数据不支持 `$regex`（已踩坑） |
+| SQLite 固定串搜索 | FTS5 `MATCH`（单 token → `foo*` 前缀；多 token → `"a b"` 短语） | `LIKE '%...%'` | FTS5 命中倒排索引，避免全表扫描；纯标点 fallback LIKE |
+| `ask --db` 与 `VFS_BACKEND` | `--db` 强制 SQLite，忽略 env | env 优先 | 让 CLI flag 语义自洽，避免 `--db` 被静默吞掉 |
+| HTTP `/v1/fs/*` 路径归一化 | VirtualFs 上 `toMountRelative()` 接受三种写法 | 让调用方必须用 mount-relative | CrewAI/LangChain 直觉上会写 `/docs/auth/*`，服务器必须接住 |
 | 目录结构存储 | PathTree 哨兵文档（`__path_tree__`） | 每个 chunk 的 metadata 里带路径 | 一次查询拿全树，ls/find 无需遍历所有 chunks |
 | 嵌入向量（M2） | 零向量占位 embedder（8 维全零） | 真实 embedder | M2 只做文本检索；M4 再换真 embedder，接口不变 |
 | grep 语义 | 两阶段（粗筛 DB，精筛 JS RegExp） | 全量 readFile + JS RegExp | 避免 N 次 DB 查询；Chroma `$regex on document` 一次筛候选 |

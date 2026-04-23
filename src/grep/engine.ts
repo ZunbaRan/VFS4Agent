@@ -179,7 +179,7 @@ function matchGlob(slug: string, glob: string): boolean {
 
 /** Convert absolute path into a slug prefix for coarse filtering, or "" for root. */
 function vfsRelPrefix(absPath: string, vfs: VirtualFs): string {
-  const mp = (vfs as unknown as { mountPoint: string }).mountPoint ?? "/";
+  const mp = vfs.getMountPoint();
   const p = normalizePath(absPath);
   if (mp === "/" || mp === "") {
     return p === "/" ? "" : p.slice(1);
@@ -190,7 +190,7 @@ function vfsRelPrefix(absPath: string, vfs: VirtualFs): string {
 }
 
 function absolutePathForSlug(slug: string, vfs: VirtualFs): string {
-  const mp = (vfs as unknown as { mountPoint: string }).mountPoint ?? "/";
+  const mp = vfs.getMountPoint();
   const prefix = mp === "/" ? "" : mp;
   return `${prefix}/${slug}`;
 }

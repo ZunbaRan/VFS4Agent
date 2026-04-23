@@ -54,7 +54,7 @@ app.post<{ Body: { path: string } }>(
     const { path: p } = req.body ?? ({} as { path: string });
     if (typeof p !== "string") return reply.code(400).send({ error: "path required" });
     try {
-      const entries = await vfs.readdirWithFileTypes(p);
+      const entries = await vfs.readdirWithFileTypes(vfs.toMountRelative(p));
       return { entries };
     } catch (e) {
       return reply
@@ -70,7 +70,7 @@ app.post<{ Body: { path: string } }>(
     const { path: p } = req.body ?? ({} as { path: string });
     if (typeof p !== "string") return reply.code(400).send({ error: "path required" });
     try {
-      const content = await vfs.readFile(p, "utf8");
+      const content = await vfs.readFile(vfs.toMountRelative(p), "utf8");
       return { content };
     } catch (e) {
       return reply
@@ -89,21 +89,37 @@ app.post<{
     listFilesOnly?: boolean;
   };
 }>("/v1/fs/grep", async (req, reply) => {
-  const { pattern, path: p = MOUNT, ignoreCase, regex, listFilesOnly } = req.body ?? {};
+  const { pattern, path: p, ignoreCase, regex, listFilesOnly } = req.body ?? {};
   if (typeof pattern !== "string") {
     return reply.code(400).send({ error: "pattern required" });
   }
+  // grep runs inside the shell sandbox — it expects a shell-absolute path.
+  // Accept both mount-rooted and mount-relative inputs by promoting the latter.
+  const target = resolveShellPath(p ?? MOUNT, MOUNT);
   const flags: string[] = ["-rn"];
   if (ignoreCase) flags.push("-i");
   if (listFilesOnly) flags.push("-l");
   if (regex === false) flags.push("-F");
-  const cmd = `grep ${flags.join(" ")} ${shellQuote(pattern)} ${shellQuote(p)}`;
+  const cmd = `grep ${flags.join(" ")} ${shellQuote(pattern)} ${shellQuote(target)}`;
   const r = await bash.exec(cmd);
   return { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode };
 });
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Turn a caller path into a shell-absolute path. If the caller passed a
+ * mount-relative path (e.g. `auth/oauth.md` or `/auth/oauth.md`), prepend the
+ * mount. Paths already rooted at the mount pass through unchanged.
+ */
+function resolveShellPath(p: string, mount: string): string {
+  const norm = p.startsWith("/") ? p : "/" + p;
+  if (mount === "/" || mount === "") return norm;
+  if (norm === mount || norm.startsWith(mount + "/")) return norm;
+  // Treat as mount-relative.
+  return mount + norm;
 }
 
 app

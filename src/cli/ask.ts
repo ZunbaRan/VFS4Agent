@@ -13,7 +13,6 @@
 
 import "dotenv/config";
 import OpenAI from "openai";
-import path from "node:path";
 
 import { createBackend } from "../backend/factory.js";
 import { runShellAgent } from "../runner/shellRunner.js";
@@ -66,8 +65,12 @@ async function main() {
   });
   const model = args.model ?? process.env.QWEN_MODEL ?? "qwen-plus";
 
-  const dbPath = args.db ?? path.resolve("./data/vfs.db");
-  const { store, label } = createBackend({ sqlitePath: dbPath });
+  // --db always implies sqlite. Without --db, honour VFS_BACKEND env (default
+  // "chroma"). Avoids the footgun where `--db ./x.db` silently talked to a
+  // Chroma server because VFS_BACKEND wasn't flipped.
+  const { store, label } = args.db
+    ? createBackend({ backend: "sqlite", sqlitePath: args.db })
+    : createBackend();
 
   if (!args.quiet) {
     console.error(`[ask] model=${model}  backend=${label}  mount=${args.mount ?? "/docs"}`);

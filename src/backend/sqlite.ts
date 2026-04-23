@@ -149,31 +149,52 @@ export class SqliteVectorStore implements VectorStore {
 
   async searchText(opts: GrepOptions): Promise<string[]> {
     const { pattern, regex = false, ignoreCase = false, pathPrefix, limit = 1000 } = opts;
-    const params: unknown[] = [];
-    let where = "1=1";
 
-    if (regex) {
-      // Our REGEXP() does `new RegExp(pattern).test(value)` (no flag support).
-      // Emulate ignoreCase by expanding ASCII letters to character classes.
+    // Fixed-string: push into FTS5 when the pattern contains a tokenisable
+    // term (alphanumeric). FTS5 is token-based and case-insensitive by default
+    // (the porter tokenizer lowercases), so it naturally handles `ignoreCase`.
+    // We still need LIKE as a fallback for patterns FTS5 can't represent
+    // (pure punctuation, short fragments under the token length, etc.), and
+    // we always re-run the exact filter downstream in the two-stage grep, so
+    // over-matching here is fine.
+    const ftsTerm = !regex ? ftsQueryForSubstring(pattern) : null;
+    const params: unknown[] = [];
+    let sql: string;
+
+    if (ftsTerm) {
+      sql =
+        `SELECT DISTINCT c.page FROM chunks c
+           JOIN chunks_fts f ON f.rowid = c.id
+           WHERE f.content MATCH ?`;
+      params.push(ftsTerm);
+      if (pathPrefix) {
+        sql += " AND (c.page = ? OR c.page LIKE ?)";
+        params.push(pathPrefix, `${pathPrefix}/%`);
+      }
+    } else if (regex) {
       const effectivePattern = ignoreCase ? caseInsensitiveRegex(pattern) : pattern;
-      where += " AND content REGEXP ?";
+      sql = "SELECT DISTINCT page FROM chunks WHERE content REGEXP ?";
       params.push(effectivePattern);
+      if (pathPrefix) {
+        sql += " AND (page = ? OR page LIKE ?)";
+        params.push(pathPrefix, `${pathPrefix}/%`);
+      }
     } else {
+      // Fallback for fixed strings FTS5 can't tokenize (e.g. pure punctuation).
       if (ignoreCase) {
-        where += " AND LOWER(content) LIKE ?";
+        sql = "SELECT DISTINCT page FROM chunks WHERE LOWER(content) LIKE ?";
         params.push(`%${pattern.toLowerCase()}%`);
       } else {
-        where += " AND content LIKE ?";
+        sql = "SELECT DISTINCT page FROM chunks WHERE content LIKE ?";
         params.push(`%${pattern}%`);
+      }
+      if (pathPrefix) {
+        sql += " AND (page = ? OR page LIKE ?)";
+        params.push(pathPrefix, `${pathPrefix}/%`);
       }
     }
 
-    if (pathPrefix) {
-      where += " AND (page = ? OR page LIKE ?)";
-      params.push(pathPrefix, `${pathPrefix}/%`);
-    }
-
-    const sql = `SELECT DISTINCT page FROM chunks WHERE ${where} LIMIT ${Number(limit) | 0}`;
+    sql += ` LIMIT ${Number(limit) | 0}`;
     const rows = this.db.prepare(sql).all(...params) as { page: string }[];
     let slugs = rows.map((r) => r.page);
 
@@ -194,4 +215,22 @@ function caseInsensitiveRegex(pattern: string): string {
   // coarse filter — the caller performs exact regex fine-filtering later,
   // so a slight over-match here is acceptable.
   return pattern.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+}
+
+/**
+ * Build an FTS5 MATCH query from a substring pattern, or return null when
+ * FTS5 can't usefully match it (empty / no alphanumeric tokens).
+ *
+ * FTS5 is token-based: single-token alphanumeric patterns map to a prefix
+ * query (`foo*`), multi-token ones to a conjunction (`"a b"` as phrase).
+ * Non-alphanumeric patterns return null so the caller falls back to LIKE.
+ */
+function ftsQueryForSubstring(pattern: string): string | null {
+  const trimmed = pattern.trim();
+  if (!trimmed) return null;
+  const tokens = trimmed.match(/[A-Za-z0-9_]+/g);
+  if (!tokens || tokens.length === 0) return null;
+  if (tokens.length === 1) return `${tokens[0]}*`;
+  // Phrase search preserves ordering; good enough for the coarse filter.
+  return `"${tokens.join(" ")}"`;
 }

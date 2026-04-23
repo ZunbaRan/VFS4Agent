@@ -196,7 +196,7 @@ async function execGrep(
 
   // Only intercept when target lives inside the VFS mount — otherwise fall back
   // to default bash grep by returning a sentinel that triggers manual scan.
-  const mp = (vfs as unknown as { mountPoint: string }).mountPoint;
+  const mp = vfs.getMountPoint();
   const allInMount =
     mp === "/" ||
     inv.paths.every((p) => p === mp || p.startsWith(mp + "/"));
