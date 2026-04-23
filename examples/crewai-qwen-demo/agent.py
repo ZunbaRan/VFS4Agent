@@ -15,7 +15,6 @@ import os
 import sys
 import json
 import requests
-from typing import Type
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -26,7 +25,7 @@ from crewai.tools import BaseTool
 load_dotenv()
 
 VFS_URL = os.environ.get("VFS_SERVER_URL", "http://localhost:7801")
-VFS_SESSION = os.environ.get("VFS_SESSION", "demo-session")
+VFS_SESSION = os.environ.get("VFS_SESSION_TOKEN") or os.environ.get("VFS_SESSION")
 DASHSCOPE_KEY = os.environ["DASHSCOPE_API_KEY"]
 DASHSCOPE_BASE = os.environ.get(
     "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -40,10 +39,13 @@ QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen-plus")
 
 
 def _vfs_post(path: str, body: dict) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if VFS_SESSION:
+        headers["x-vfs-session"] = VFS_SESSION
     r = requests.post(
         f"{VFS_URL}{path}",
         json=body,
-        headers={"X-VFS-Session": VFS_SESSION, "Content-Type": "application/json"},
+        headers=headers,
         timeout=30,
     )
     r.raise_for_status()
@@ -56,7 +58,7 @@ class VfsBashInput(BaseModel):
         description=(
             "A bash-like command to execute inside the documentation sandbox. "
             "Supports: ls, cat, head, tail, wc, find, tree, grep (-r/-i/-n/-l), "
-            "awk, sed, sort, uniq. The docs are read-only under /docs."
+            "awk, sed, sort, uniq. The docs are read-only under /vfs."
         ),
     )
 
@@ -65,10 +67,10 @@ class VfsBashTool(BaseTool):
     name: str = "vfs_bash"
     description: str = (
         "Execute bash commands against a virtual filesystem of documentation. "
-        "Example: `grep -rni 'oauth' /docs`, `cat /docs/auth/oauth.md`, "
-        "`find /docs -name '*.md'`, `tree /docs`."
+        "Example: `grep -rni 'oauth' /vfs`, `cat /vfs/auth/oauth.md`, "
+        "`find /vfs -name '*.md'`, `tree /vfs`."
     )
-    args_schema: Type[BaseModel] = VfsBashInput
+    args_schema: type[BaseModel] = VfsBashInput
 
     def _run(self, command: str) -> str:
         data = _vfs_post("/v1/bash", {"command": command})
@@ -89,6 +91,11 @@ class VfsBashTool(BaseTool):
         return out
 
 
+# Resolve pydantic forward references at import time so the tool works even
+# when this module is loaded via importlib.util (e.g. from the test harness).
+VfsBashTool.model_rebuild()
+
+
 # ----------------------------------------------------------------------------
 # Crew
 # ----------------------------------------------------------------------------
@@ -105,12 +112,12 @@ def build_crew(question: str) -> Crew:
         role="Docs Researcher",
         goal=(
             "Answer questions accurately by reading the project documentation "
-            "exposed under /docs using bash commands."
+            "exposed under /vfs using bash commands."
         ),
         backstory=(
             "You are a careful technical writer. You never fabricate details. "
             "When a question comes in you first explore the docs layout with "
-            "`tree /docs` or `find /docs -name '*.md'`, then grep for keywords, "
+            "`tree /vfs` or `find /vfs -name '*.md'`, then grep for keywords, "
             "and finally `cat` the most relevant files to extract the answer."
         ),
         tools=[VfsBashTool()],
@@ -123,10 +130,10 @@ def build_crew(question: str) -> Crew:
     task = Task(
         description=(
             f"User question: {question}\n\n"
-            "Answer using only evidence found in /docs. Cite file paths you read.\n"
+            "Answer using only evidence found in /vfs. Cite file paths you read.\n"
             "Workflow hint:\n"
-            "  1. `tree /docs` to see layout.\n"
-            "  2. `grep -rni <keyword> /docs` to locate relevant files.\n"
+            "  1. `tree /vfs` to see layout.\n"
+            "  2. `grep -rni <keyword> /vfs` to locate relevant files.\n"
             "  3. `cat <path>` to read the full doc.\n"
             "  4. Synthesize a concise answer with inline file citations."
         ),
@@ -151,7 +158,7 @@ def main() -> None:
 
     # Sanity ping
     try:
-        ping = _vfs_post("/v1/bash", {"command": "ls /docs"})
+        ping = _vfs_post("/v1/bash", {"command": "ls /vfs"})
         print(f"[demo] vfs ping: {json.dumps(ping)[:200]}")
     except Exception as e:
         print(f"[demo] ERROR: cannot reach vfs-server at {VFS_URL}: {e}")

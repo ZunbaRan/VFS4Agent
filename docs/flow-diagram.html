@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vfs4Agent — Command Execution Flow</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #faf7f2;
+    font-family: 'Geist', sans-serif;
+    color: #1c1917;
+    padding: 48px 32px 64px;
+    min-height: 100vh;
+  }
+  .header {
+    max-width: 720px;
+    margin: 0 auto 32px;
+  }
+  .eyebrow {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #78716c;
+    margin-bottom: 8px;
+  }
+  h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 1.75rem;
+    font-weight: 400;
+    color: #1c1917;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: #57534e;
+    line-height: 1.6;
+  }
+  .diagram-wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    background: #f2ede4;
+    border: 1px solid rgba(28,25,23,0.12);
+    border-radius: 8px;
+    padding: 4px;
+    overflow-x: auto;
+  }
+  .annotation {
+    max-width: 720px;
+    margin: 24px auto 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .anno-card {
+    background: #ffffff;
+    border: 1px solid rgba(28,25,23,0.12);
+    border-radius: 6px;
+    padding: 16px 20px;
+  }
+  .anno-card .eyebrow { margin-bottom: 4px; }
+  .anno-card p {
+    font-size: 12px;
+    color: #57534e;
+    line-height: 1.65;
+  }
+  .anno-card code {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    background: #f2ede4;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #1c1917;
+  }
+  .footer {
+    max-width: 720px;
+    margin: 24px auto 0;
+    padding-top: 16px;
+    border-top: 1px solid rgba(28,25,23,0.10);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: #78716c;
+    letter-spacing: 0.06em;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <p class="eyebrow">vfs4Agent · Command Execution Flow</p>
+  <h1>命令执行流程</h1>
+  <p class="subtitle">
+    一条命令从 Agent 发出，经 BashRunner → Optimizer 检测 → 快速路径或 bash 降级，最终返回结果的完整决策树。
+  </p>
+</div>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 640 820" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(28,25,23,0.08)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#57534e"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#b5523a"/>
+    </marker>
+    <marker id="arrow-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#a8a29e"/>
+    </marker>
+    <marker id="arrow-success" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#16a34a"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="640" height="820" fill="#f2ede4"/>
+  <rect width="640" height="820" fill="url(#dots)" opacity="0.5"/>
+
+  <!-- Lane divider: fast path zone (right side) -->
+  <rect x="468" y="256" width="148" height="276" rx="6" fill="rgba(181,82,58,0.04)" stroke="rgba(181,82,58,0.18)" stroke-width="0.8" stroke-dasharray="4,4"/>
+  <text x="542" y="272" fill="rgba(181,82,58,0.55)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.10em">FAST PATH</text>
+
+  <!-- ═══════════════════════════════ ARROWS ═══════════════════════════════ -->
+
+  <!-- Main spine arrows (ink / muted) -->
+
+  <!-- START → BashRunner.exec -->
+  <path d="M 256 84 L 256 108" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- BashRunner.exec → optimizer match diamond -->
+  <path d="M 256 156 L 256 188" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- diamond NO → spawnBash -->
+  <path d="M 256 308 L 256 332" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="235" y="310" width="22" height="14" rx="2" fill="#f2ede4"/>
+  <text x="246" y="320" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+
+  <!-- spawnBash → timeout diamond -->
+  <path d="M 256 380 L 256 412" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- timeout NO → return result -->
+  <path d="M 256 528 L 256 556" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="235" y="530" width="22" height="14" rx="2" fill="#f2ede4"/>
+  <text x="246" y="540" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+
+  <!-- return result → END -->
+  <path d="M 256 604 L 256 628" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- ── Right branch: optimizer match YES → execute ── (accent) -->
+  <path d="M 376 248 L 484 248" fill="none" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <rect x="395" y="238" width="22" height="14" rx="2" fill="#f2ede4"/>
+  <text x="406" y="248" fill="#b5523a" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+
+  <!-- execute → success? diamond -->
+  <path d="M 542 312" fill="none"/>
+  <path d="M 542 312 L 542 364" fill="none" stroke="#b5523a" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+  <!-- success YES → curve down to return result (green, fast exit) -->
+  <path d="M 542 484 L 542 580 L 352 580" fill="none" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrow-success)"/>
+  <rect x="500" y="516" width="60" height="14" rx="2" fill="#f2ede4"/>
+  <text x="530" y="526" fill="#16a34a" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">FAST EXIT</text>
+
+  <!-- success NO → merge back to left spine at spawnBash -->
+  <path d="M 484 424 L 388 424 L 388 356 L 256 356" fill="none" stroke="#a8a29e" stroke-width="1.0" stroke-dasharray="4,3" marker-end="url(#arrow-muted)"/>
+  <rect x="346" y="340" width="48" height="14" rx="2" fill="#f2ede4"/>
+  <text x="370" y="350" fill="#a8a29e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">FALLTHRU</text>
+
+  <!-- timeout YES → exit 124 label -->
+  <path d="M 368 468 L 416 468" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="347" y="458" width="22" height="14" rx="2" fill="#f2ede4"/>
+  <text x="358" y="468" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+
+  <!-- exit=124 → merge to return result -->
+  <path d="M 416 456 L 416 440 L 488 440 L 488 580 L 352 580" fill="none" stroke="#57534e" stroke-width="1.0" marker-end="url(#arrow)"/>
+
+  <!-- ═══════════════════════════════ NODES ═══════════════════════════════ -->
+
+  <!-- START oval -->
+  <rect x="176" y="56" width="160" height="28" rx="24" fill="#faf7f2"/>
+  <ellipse cx="256" cy="70" rx="80" ry="18" fill="rgba(28,25,23,0.06)" stroke="#1c1917" stroke-width="1"/>
+  <text x="256" y="74" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">command arrives</text>
+
+  <!-- BashRunner.exec() rect -->
+  <rect x="96" y="108" width="320" height="48" rx="6" fill="#faf7f2"/>
+  <rect x="96" y="108" width="320" height="48" rx="6" fill="rgba(181,82,58,0.08)" stroke="#b5523a" stroke-width="1.4"/>
+  <text x="256" y="130" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">BashRunner.exec(cmd)</text>
+  <text x="256" y="146" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">registry.find(cmd, store) → check capabilities</text>
+
+  <!-- optimizer match? diamond (FOCAL decision, accent) -->
+  <!-- cx=256, cy=248, half-w=120, half-h=60 -->
+  <!-- points: top=(256,188), right=(376,248), bottom=(256,308), left=(136,248) -->
+  <polygon points="256,188 376,248 256,308 136,248" fill="#faf7f2"/>
+  <polygon points="256,188 376,248 256,308 136,248" fill="rgba(181,82,58,0.06)" stroke="#b5523a" stroke-width="1.4"/>
+  <text x="256" y="244" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">optimizer</text>
+  <text x="256" y="260" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">match?</text>
+
+  <!-- optimizer.execute() rect (right branch) -->
+  <rect x="484" y="264" width="132" height="48" rx="6" fill="#faf7f2"/>
+  <rect x="484" y="264" width="132" height="48" rx="6" fill="rgba(181,82,58,0.10)" stroke="#b5523a" stroke-width="1.2"/>
+  <text x="550" y="284" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">optimizer</text>
+  <text x="550" y="299" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">.execute()</text>
+
+  <!-- success? diamond (right branch) -->
+  <!-- cx=542, cy=424, half-w=58, half-h=60 -->
+  <!-- points: top=(542,364), right=(600,424), bottom=(542,484), left=(484,424) -->
+  <polygon points="542,364 600,424 542,484 484,424" fill="#faf7f2"/>
+  <polygon points="542,364 600,424 542,484 484,424" fill="rgba(181,82,58,0.04)" stroke="#b5523a" stroke-width="1.2"/>
+  <text x="542" y="420" fill="#1c1917" font-size="10" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">success?</text>
+  <!-- YES label on diamond -->
+  <rect x="519" y="350" width="46" height="14" rx="2" fill="#f2ede4"/>
+  <text x="542" y="360" fill="#b5523a" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">YES ↓</text>
+  <!-- NO label on diamond left -->
+  <rect x="456" y="416" width="26" height="14" rx="2" fill="#f2ede4"/>
+  <text x="469" y="426" fill="#a8a29e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+
+  <!-- spawnBash rect -->
+  <rect x="96" y="332" width="320" height="48" rx="6" fill="#faf7f2"/>
+  <rect x="96" y="332" width="320" height="48" rx="6" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <text x="256" y="352" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">spawnBash(bash -c cmd)</text>
+  <text x="256" y="368" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">async · streams stdout/stderr</text>
+
+  <!-- timeout? diamond -->
+  <!-- cx=256, cy=468, half-w=112, half-h=60 -->
+  <!-- top=(256,408), right=(368,468), bottom=(256,528), left=(144,468) -->
+  <polygon points="256,412 368,468 256,524 144,468" fill="#faf7f2"/>
+  <polygon points="256,412 368,468 256,524 144,468" fill="rgba(28,25,23,0.04)" stroke="#57534e" stroke-width="1"/>
+  <text x="256" y="462" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">15s</text>
+  <text x="256" y="478" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">timeout?</text>
+
+  <!-- exit=124 small rect -->
+  <rect x="416" y="444" width="72" height="32" rx="6" fill="#faf7f2"/>
+  <rect x="416" y="444" width="72" height="32" rx="6" fill="rgba(28,25,23,0.05)" stroke="rgba(28,25,23,0.25)" stroke-width="0.8"/>
+  <text x="452" y="460" fill="#57534e" font-size="10" font-weight="600" font-family="'Geist Mono',monospace" text-anchor="middle">SIGKILL</text>
+  <text x="452" y="472" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">exit=124</text>
+
+  <!-- return result rect -->
+  <rect x="96" y="556" width="320" height="48" rx="6" fill="#faf7f2"/>
+  <rect x="96" y="556" width="320" height="48" rx="6" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <text x="256" y="576" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">return result</text>
+  <text x="256" y="592" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">{ stdout, stderr, exitCode }  ·  slice ≤64KB</text>
+
+  <!-- merge dot (right fast path meets return rect) -->
+  <circle cx="352" cy="580" r="4" fill="#16a34a"/>
+
+  <!-- END oval -->
+  <ellipse cx="256" cy="648" rx="80" ry="18" fill="rgba(28,25,23,0.06)" stroke="#1c1917" stroke-width="1"/>
+  <text x="256" y="652" fill="#1c1917" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">response to agent</text>
+
+  <!-- ═══════════════════════════════ LEGEND ═══════════════════════════════ -->
+  <line x1="30" y1="700" x2="610" y2="700" stroke="rgba(28,25,23,0.10)" stroke-width="0.8"/>
+  <text x="30" y="716" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+
+  <!-- diamond -->
+  <polygon points="116,714 136,723 116,732 96,723" fill="rgba(181,82,58,0.08)" stroke="#b5523a" stroke-width="1"/>
+  <text x="150" y="727" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">DECISION</text>
+
+  <!-- rect -->
+  <rect x="228" y="712" width="48" height="20" rx="4" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <text x="275" y="726" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace"> ACTION</text>
+
+  <!-- accent arrow -->
+  <line x1="360" y1="723" x2="400" y2="723" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <text x="408" y="727" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">FAST PATH</text>
+
+  <!-- green dashed -->
+  <line x1="492" y1="723" x2="524" y2="723" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrow-success)"/>
+  <text x="532" y="727" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">SUCCESS EXIT</text>
+
+  <!-- dashed muted -->
+  <line x1="30" y1="755" x2="62" y2="755" stroke="#a8a29e" stroke-width="1.0" stroke-dasharray="4,3" marker-end="url(#arrow-muted)"/>
+  <text x="70" y="759" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">FALLTHROUGH (optimizer threw)</text>
+
+</svg>
+</div>
+
+<div class="annotation">
+  <div class="anno-card">
+    <p class="eyebrow">Optimizer Fast Path</p>
+    <p>
+      若 <code>registry.find(cmd, store)</code> 命中且 store 满足
+      <code>requiredCapabilities</code>，调用 <code>optimizer.execute()</code>
+      直接查 VectorStore，绕过 FUSE 和 bash 子进程。典型耗时 &lt;50ms。
+    </p>
+  </div>
+  <div class="anno-card">
+    <p class="eyebrow">Bash Fallback</p>
+    <p>
+      未命中（命令不在优化列表或 capabilities 不满足）或 optimizer 抛错时，
+      降级到 <code>spawnBash(bash -c cmd)</code>，15s 后 SIGKILL（<code>exitCode=124</code>），
+      stdout truncated to 64KB。
+    </p>
+  </div>
+</div>
+
+<div class="footer">
+  <span>vfs4Agent · command execution flow · 2026</span>
+  <span>src/agent/bash.ts · createBashRunner()</span>
+</div>
+
+</body>
+</html>

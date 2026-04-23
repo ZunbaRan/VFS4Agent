@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vfs4Agent — System Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #faf7f2;
+    font-family: 'Geist', sans-serif;
+    color: #1c1917;
+    padding: 48px 32px 64px;
+    min-height: 100vh;
+  }
+  .header {
+    max-width: 880px;
+    margin: 0 auto 32px;
+  }
+  .eyebrow {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #78716c;
+    margin-bottom: 8px;
+  }
+  h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 1.75rem;
+    font-weight: 400;
+    color: #1c1917;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: #57534e;
+    line-height: 1.6;
+  }
+  .diagram-wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    background: #f2ede4;
+    border: 1px solid rgba(28,25,23,0.12);
+    border-radius: 8px;
+    padding: 4px;
+    overflow-x: auto;
+  }
+  .cards {
+    max-width: 880px;
+    margin: 32px auto 0;
+    display: grid;
+    grid-template-columns: 1.1fr 1fr 0.9fr;
+    gap: 16px;
+  }
+  .card {
+    background: #ffffff;
+    border: 1px solid rgba(28,25,23,0.12);
+    border-radius: 6px;
+    padding: 20px;
+  }
+  .card .eyebrow { margin-bottom: 6px; }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1c1917;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-accent { background: #b5523a; }
+  .dot-ink { background: #1c1917; }
+  .dot-muted { background: #57534e; }
+  .card ul {
+    list-style: none;
+    font-size: 12px;
+    color: #57534e;
+    line-height: 1.7;
+  }
+  .card ul li::before { content: "–  "; color: #78716c; }
+  .footer {
+    max-width: 880px;
+    margin: 32px auto 0;
+    padding-top: 16px;
+    border-top: 1px solid rgba(28,25,23,0.10);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: #78716c;
+    letter-spacing: 0.06em;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <p class="eyebrow">vfs4Agent · System Architecture</p>
+  <h1>系统架构</h1>
+  <p class="subtitle">
+    VectorStore → FUSE 虚拟文件系统 → BashRunner（优化器快速路径）→ HTTP Server / Agent REPL
+  </p>
+</div>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 800 740" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(28,25,23,0.08)"/>
+    </pattern>
+    <!-- Arrow markers -->
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#57534e"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#b5523a"/>
+    </marker>
+    <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#a8a29e"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="740" fill="#f2ede4"/>
+  <rect width="800" height="740" fill="url(#dots)" opacity="0.5"/>
+
+  <!-- ═══════════════════════════ ARROWS (drawn before boxes) ═══════════════════════════ -->
+
+  <!-- A1: LLM Agent → Fastify (HTTP, link-blue) -->
+  <path d="M 144 108 L 144 136 L 168 136 L 168 164" fill="none" stroke="#2563eb" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+  <rect x="100" y="126" width="36" height="14" rx="2" fill="#f2ede4"/>
+  <text x="118" y="136" fill="#2563eb" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">HTTP</text>
+
+  <!-- A2: CLI/REPL → Agent Main -->
+  <path d="M 656 108 L 656 136 L 632 136 L 632 164" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- A3: Fastify → BashRunner -->
+  <path d="M 168 224 L 168 260 L 296 260 L 296 288" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="204" y="252" width="52" height="14" rx="2" fill="#f2ede4"/>
+  <text x="230" y="262" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">exec(cmd)</text>
+
+  <!-- A4: Agent Main → BashRunner -->
+  <path d="M 632 224 L 632 260 L 504 260 L 504 288" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- A5: BashRunner → Optimizer Registry (accent, fast path) -->
+  <path d="M 260 356 L 260 392 L 168 392 L 168 420" fill="none" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <rect x="180" y="383" width="48" height="14" rx="2" fill="#f2ede4"/>
+  <text x="204" y="393" fill="#b5523a" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">MATCH</text>
+
+  <!-- A6: BashRunner → bash spawn (muted, fallback) -->
+  <path d="M 540 356 L 540 392 L 632 392 L 632 420" fill="none" stroke="#a8a29e" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-muted)"/>
+  <rect x="548" y="383" width="56" height="14" rx="2" fill="#f2ede4"/>
+  <text x="576" y="393" fill="#a8a29e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">FALLBACK</text>
+
+  <!-- A7: Optimizer Registry → FUSE -->
+  <path d="M 168 480 L 168 516 L 260 516 L 260 536" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="175" y="504" width="44" height="14" rx="2" fill="#f2ede4"/>
+  <text x="197" y="514" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">QUERY</text>
+
+  <!-- A8: bash spawn → FUSE (filesystem calls) -->
+  <path d="M 632 480 L 632 516 L 540 516 L 540 536" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="546" y="504" width="44" height="14" rx="2" fill="#f2ede4"/>
+  <text x="568" y="514" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">FS READ</text>
+
+  <!-- A9: FUSE → Backend -->
+  <path d="M 400 604 L 400 628" fill="none" stroke="#57534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- ═══════════════════════════ NODES ═══════════════════════════ -->
+
+  <!-- Tier 1: External Actors -->
+
+  <!-- Node 1: LLM Agent -->
+  <rect x="48" y="52" width="192" height="56" rx="6" fill="#faf7f2"/>
+  <rect x="48" y="52" width="192" height="56" rx="6" fill="rgba(28,25,23,0.03)" stroke="rgba(28,25,23,0.28)" stroke-width="1"/>
+  <rect x="56" y="60" width="24" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.28)" stroke-width="0.8"/>
+  <text x="68" y="69" fill="rgba(28,25,23,0.55)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+  <text x="144" y="86" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">LLM Agent</text>
+  <text x="144" y="101" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">OpenAI · Qwen · Claude</text>
+
+  <!-- Node 2: CLI / REPL -->
+  <rect x="560" y="52" width="192" height="56" rx="6" fill="#faf7f2"/>
+  <rect x="560" y="52" width="192" height="56" rx="6" fill="rgba(28,25,23,0.03)" stroke="rgba(28,25,23,0.28)" stroke-width="1"/>
+  <rect x="568" y="60" width="24" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.28)" stroke-width="0.8"/>
+  <text x="580" y="69" fill="rgba(28,25,23,0.55)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+  <text x="656" y="86" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">CLI / REPL</text>
+  <text x="656" y="101" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">ask.ts · main.ts</text>
+
+  <!-- Tier 2: Entry Points -->
+
+  <!-- Node 3: Fastify Server -->
+  <rect x="36" y="164" width="264" height="60" rx="6" fill="#faf7f2"/>
+  <rect x="36" y="164" width="264" height="60" rx="6" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <rect x="44" y="172" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.35)" stroke-width="0.8"/>
+  <text x="60" y="181" fill="rgba(28,25,23,0.65)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">HTTP</text>
+  <text x="168" y="200" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">Fastify Server :7801</text>
+  <text x="168" y="215" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/v1/bash · /v1/fs/* · /v1/health</text>
+
+  <!-- Node 4: Agent Main -->
+  <rect x="500" y="164" width="264" height="60" rx="6" fill="#faf7f2"/>
+  <rect x="500" y="164" width="264" height="60" rx="6" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <rect x="508" y="172" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.35)" stroke-width="0.8"/>
+  <text x="524" y="181" fill="rgba(28,25,23,0.65)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">PROC</text>
+  <text x="632" y="200" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">Agent Main / REPL</text>
+  <text x="632" y="215" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">embedded · startRepl() · OpenAI adapter</text>
+
+  <!-- Tier 3: BashRunner (FOCAL) -->
+
+  <!-- Node 5: BashRunner -->
+  <rect x="232" y="288" width="336" height="68" rx="6" fill="#faf7f2"/>
+  <rect x="232" y="288" width="336" height="68" rx="6" fill="rgba(181,82,58,0.08)" stroke="#b5523a" stroke-width="1.4"/>
+  <rect x="240" y="296" width="32" height="12" rx="2" fill="transparent" stroke="rgba(181,82,58,0.45)" stroke-width="0.8"/>
+  <text x="256" y="305" fill="rgba(181,82,58,0.85)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">CORE</text>
+  <text x="400" y="326" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">BashRunner</text>
+  <text x="400" y="341" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">createBashRunner() · async spawn · 64KB cap · 15s timeout</text>
+
+  <!-- Tier 4: Optimizer Registry + bash spawn -->
+
+  <!-- Node 6: Optimizer Registry -->
+  <rect x="36" y="420" width="264" height="60" rx="6" fill="#faf7f2"/>
+  <rect x="36" y="420" width="264" height="60" rx="6" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <rect x="44" y="428" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.35)" stroke-width="0.8"/>
+  <text x="60" y="437" fill="rgba(28,25,23,0.65)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">OPTS</text>
+  <text x="168" y="456" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">Optimizer Registry</text>
+  <text x="168" y="471" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">grep · find · tree · wc · ls · du</text>
+
+  <!-- Node 7: bash spawn -->
+  <rect x="500" y="420" width="264" height="60" rx="6" fill="#faf7f2"/>
+  <rect x="500" y="420" width="264" height="60" rx="6" fill="rgba(28,25,23,0.04)" stroke="rgba(28,25,23,0.25)" stroke-width="1" stroke-dasharray="5,4"/>
+  <rect x="508" y="428" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.25)" stroke-width="0.8"/>
+  <text x="524" y="437" fill="rgba(28,25,23,0.45)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">PROC</text>
+  <text x="632" y="456" fill="#57534e" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">bash spawn</text>
+  <text x="632" y="471" fill="#a8a29e" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">child_process.spawn · fallback path</text>
+
+  <!-- Tier 5: FUSE /vfs -->
+
+  <!-- Node 8: FUSE /vfs (FOCAL 2) -->
+  <rect x="152" y="536" width="496" height="68" rx="6" fill="#faf7f2"/>
+  <rect x="152" y="536" width="496" height="68" rx="6" fill="rgba(181,82,58,0.06)" stroke="#b5523a" stroke-width="1.4"/>
+  <rect x="160" y="544" width="24" height="12" rx="2" fill="transparent" stroke="rgba(181,82,58,0.45)" stroke-width="0.8"/>
+  <text x="172" y="553" fill="rgba(181,82,58,0.85)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">FS</text>
+  <text x="400" y="574" fill="#1c1917" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">FUSE Virtual Filesystem</text>
+  <text x="400" y="589" fill="#78716c" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">fuse-native · mount /vfs · getattr · readdir · read · ops/</text>
+
+  <!-- Tier 6: VectorStore Backend -->
+
+  <!-- Node 9: Backend -->
+  <rect x="152" y="628" width="496" height="52" rx="6" fill="#faf7f2"/>
+  <rect x="152" y="628" width="496" height="52" rx="6" fill="rgba(28,25,23,0.04)" stroke="rgba(28,25,23,0.20)" stroke-width="1"/>
+  <rect x="160" y="636" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,25,23,0.20)" stroke-width="0.8"/>
+  <text x="176" y="645" fill="rgba(28,25,23,0.40)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">DATA</text>
+
+  <!-- Backend split internal line -->
+  <line x1="400" y1="636" x2="400" y2="672" stroke="rgba(28,25,23,0.12)" stroke-width="0.8"/>
+
+  <text x="276" y="658" fill="#57534e" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">ChromaVectorStore</text>
+  <text x="276" y="671" fill="#a8a29e" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">HTTP · chroma</text>
+  <text x="524" y="658" fill="#57534e" font-size="12" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">SqliteVectorStore</text>
+  <text x="524" y="671" fill="#a8a29e" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">better-sqlite3 · local</text>
+
+  <!-- Tier labels (right gutter) -->
+  <text x="780" y="84" fill="rgba(28,25,23,0.25)" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.10em">EXTERNAL</text>
+  <text x="780" y="200" fill="rgba(28,25,23,0.25)" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.10em">ENTRY</text>
+  <text x="780" y="326" fill="rgba(28,25,23,0.25)" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.10em">RUNNER</text>
+  <text x="780" y="456" fill="rgba(28,25,23,0.25)" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.10em">COMMAND</text>
+  <text x="780" y="574" fill="rgba(28,25,23,0.25)" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.10em">VFS</text>
+  <text x="780" y="654" fill="rgba(28,25,23,0.25)" font-size="8" font-family="'Geist Mono',monospace" text-anchor="end" letter-spacing="0.10em">STORAGE</text>
+
+  <!-- ═══════════════════════════ LEGEND ═══════════════════════════ -->
+  <line x1="30" y1="700" x2="770" y2="700" stroke="rgba(28,25,23,0.10)" stroke-width="0.8"/>
+  <text x="30" y="716" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+
+  <!-- Focal node sample -->
+  <rect x="100" y="706" width="48" height="20" rx="4" fill="rgba(181,82,58,0.08)" stroke="#b5523a" stroke-width="1.2"/>
+  <text x="124" y="720" fill="#b5523a" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">FOCAL</text>
+
+  <!-- Backend/step sample -->
+  <rect x="164" y="706" width="48" height="20" rx="4" fill="white" stroke="#1c1917" stroke-width="1"/>
+  <text x="188" y="720" fill="#57534e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">STEP</text>
+
+  <!-- Fallback/optional sample -->
+  <rect x="228" y="706" width="48" height="20" rx="4" fill="rgba(28,25,23,0.04)" stroke="rgba(28,25,23,0.25)" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="252" y="720" fill="#a8a29e" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">FALLBACK</text>
+
+  <!-- HTTP arrow sample -->
+  <line x1="296" y1="716" x2="336" y2="716" stroke="#2563eb" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+  <text x="370" y="720" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">HTTP CALL</text>
+
+  <!-- Accent arrow sample -->
+  <line x1="444" y1="716" x2="484" y2="716" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <text x="518" y="720" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">FAST PATH</text>
+
+  <!-- Dashed arrow sample -->
+  <line x1="596" y1="716" x2="636" y2="716" stroke="#a8a29e" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-muted)"/>
+  <text x="648" y="720" fill="#78716c" font-size="8" font-family="'Geist Mono',monospace">FALLBACK</text>
+
+</svg>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <p class="eyebrow">BashRunner</p>
+    <div class="card-title"><span class="dot dot-accent"></span>Optimizer 快速路径</div>
+    <ul>
+      <li>命令匹配 Optimizer → 直接走 VectorStore，不起 bash 进程</li>
+      <li>6 个 Optimizer：grep / find / tree / wc / ls -R / du</li>
+      <li>命中失败或无匹配 → 降级到 bash spawn（fallback）</li>
+      <li>VFS_OPTIMIZERS 环境变量控制启用集合</li>
+    </ul>
+  </div>
+  <div class="card">
+    <p class="eyebrow">FUSE Layer</p>
+    <div class="card-title"><span class="dot dot-accent"></span>虚拟文件系统桥</div>
+    <ul>
+      <li>VectorStore → 真实 /vfs 挂载点</li>
+      <li>bash 子进程用标准 ls/cat/grep 透明访问</li>
+      <li>fuse-native · getattr · readdir · read</li>
+      <li>SIGTERM → unmount → 优雅退出</li>
+    </ul>
+  </div>
+  <div class="card">
+    <p class="eyebrow">Backend</p>
+    <div class="card-title"><span class="dot dot-ink"></span>可插拔存储</div>
+    <ul>
+      <li>Chroma（HTTP 服务）</li>
+      <li>SQLite（本地零依赖）</li>
+      <li>VFS_BACKEND 环境变量切换</li>
+      <li>VectorStoreCapabilities 声明能力</li>
+    </ul>
+  </div>
+</div>
+
+<div class="footer">
+  <span>vfs4Agent · system architecture · 2026</span>
+  <span>VFS_BACKEND · VFS_OPTIMIZERS · VFS_MODE · VFS_PORT</span>
+</div>
+
+</body>
+</html>
