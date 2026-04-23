@@ -2,7 +2,11 @@ version: "3.8"
 
 services:
   vfs-agent:
-    build: .
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
     container_name: vfs4agent
     cap_add:
       - SYS_ADMIN
