@@ -1,3 +1,20 @@
+/**
+ * FUSE mount entrypoint.
+ *
+ * ⚠️ DEADLOCK WARNING ⚠️
+ * Never use execSync/spawnSync or any blocking subprocess API to run commands
+ * that access the mount point from the SAME process that owns the FUSE mount.
+ *
+ * Why: FUSE callbacks (getattr/readdir/read/...) run on the Node.js event loop.
+ * If you block the event loop with a Sync call, the FUSE callback can never
+ * respond to kernel requests → permanent deadlock.
+ *
+ * ✅ Use spawn() (async) — see src/agent/bash.ts
+ * ❌ Never use execSync()/spawnSync() in the mount-owner process
+ *
+ * For testing, use process isolation: mount in a detached container,
+ * then `docker exec` to run bash commands.
+ */
 import * as fs from "node:fs";
 import Fuse from "fuse-native";
 import type { VectorStore } from "../types.js";

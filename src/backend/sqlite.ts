@@ -11,6 +11,7 @@ import type {
   GrepOptions,
   PathTree,
   VectorStore,
+  VectorStoreCapabilities,
 } from "../types.js";
 
 const PATH_TREE_KEY = "__path_tree__";
@@ -20,6 +21,14 @@ export interface SqliteVectorStoreOptions {
 }
 
 export class SqliteVectorStore implements VectorStore {
+  readonly capabilities = {
+    supportsTextSearch: true,
+    supportsRegex: true, // Custom REGEXP function registered in constructor
+    supportsBulkPrefetch: true,
+    hasLineCounts: true,
+    hasByteSizes: true,
+  } satisfies VectorStoreCapabilities;
+
   private db: Database.Database;
 
   constructor(opts: SqliteVectorStoreOptions) {

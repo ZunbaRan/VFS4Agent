@@ -28,7 +28,7 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
       - DASHSCOPE_BASE_URL=${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      - QWEN_MODEL=${QWEN_MODEL:-qwen3.6-plus}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
     stdin_open: true
     tty: true
     working_dir: /app

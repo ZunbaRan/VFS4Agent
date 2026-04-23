@@ -1,0 +1,200 @@
+"""Base classes and utilities for LangChain tools."""
+
+from __future__ import annotations
+
+import functools
+import inspect
+import json
+import logging
+import typing
+import warnings
+from abc import ABC, abstractmethod
+from collections.abc import Callable  # noqa: TC003
+from inspect import signature
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+
+import typing_extensions
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PydanticDeprecationWarning,
+    SkipValidation,
+    ValidationError,
+    validate_arguments,
+)
+from pydantic.fields import FieldInfo
+from pydantic.v1 import BaseModel as BaseModelV1
+from pydantic.v1 import ValidationError as ValidationErrorV1
+from pydantic.v1 import validate_arguments as validate_arguments_v1
+from typing_extensions import override
+
+from langchain_core.callbacks import (
+    AsyncCallbackManager,
+    CallbackManager,
+    Callbacks,
+)
+from langchain_core.messages.tool import ToolCall, ToolMessage, ToolOutputMixin
+from langchain_core.runnables import (
+    RunnableConfig,
+    RunnableSerializable,
+    ensure_config,
+    patch_config,
+    run_in_executor,
+)
+from langchain_core.runnables.config import set_config_context
+from langchain_core.runnables.utils import coro_with_context
+from langchain_core.utils.function_calling import (
+    _parse_google_docstring,
+    _py_38_safe_origin,
+)
+from langchain_core.utils.pydantic import (
+    TypeBaseModel,
+    _create_subset_model,
+    get_fields,
+    is_basemodel_subclass,
+    is_pydantic_v1_subclass,
+    is_pydantic_v2_subclass,
+)
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+FILTERED_ARGS = ("run_manager", "callbacks")
+TOOL_MESSAGE_BLOCK_TYPES = (
+    "text",
+    "image_url",
+    "image",
+    "json",
+    "search_result",
+    "custom_tool_call_output",
+    "document",
+    "file",
+)
+
+_logger = logging.getLogger(__name__)
+
+
+class SchemaAnnotationError(TypeError):
+    """Raised when `args_schema` is missing or has an incorrect type annotation."""
+
+
+def _is_annotated_type(typ: type[Any]) -> bool:
+    """Check if a type is an `Annotated` type.
+
+    Args:
+        typ: The type to check.
+
+    Returns:
+        `True` if the type is an `Annotated` type, `False` otherwise.
+    """
+    return get_origin(typ) in {typing.Annotated, typing_extensions.Annotated}
+
+
+def _get_annotation_description(arg_type: type) -> str | None:
+    """Extract description from an `Annotated` type.
+
+    Checks for string annotations and `FieldInfo` objects with descriptions.
+
+    Args:
+        arg_type: The type to extract description from.
+
+    Returns:
+        The description string if found, `None` otherwise.
+    """
+    if _is_annotated_type(arg_type):
+        annotated_args = get_args(arg_type)
+        for annotation in annotated_args[1:]:
+            if isinstance(annotation, str):
+                return annotation
+            if isinstance(annotation, FieldInfo) and annotation.description:
+                return annotation.description
+    return None
+
+
+def _get_filtered_args(
+    inferred_model: type[BaseModel],
+    func: Callable,
+    *,
+    filter_args: Sequence[str],
+    include_injected: bool = True,
+) -> dict:
+    """Get filtered arguments from a function's signature.
+
+    Args:
+        inferred_model: The Pydantic model inferred from the function.
+        func: The function to extract arguments from.
+        filter_args: Arguments to exclude from the result.
+        include_injected: Whether to include injected arguments.
+
+    Returns:
+        Dictionary of filtered arguments with their schema definitions.
+    """
+    schema = inferred_model.model_json_schema()["properties"]
+    valid_keys = signature(func).parameters
+    return {
+        k: schema[k]
+        for i, (k, param) in enumerate(valid_keys.items())
+        if k not in filter_args
+        and (i > 0 or param.name not in {"self", "cls"})
+        and (include_injected or not _is_injected_arg_type(param.annotation))
+    }
+
+
+def _parse_python_function_docstring(
+    function: Callable, annotations: dict, *, error_on_invalid_docstring: bool = False
+) -> tuple[str, dict]:
+    """Parse function and argument descriptions from a docstring.
+
+    Assumes the function docstring follows Google Python style guide.
+
+    Args:
+        function: The function to parse the docstring from.
+        annotations: Type annotations for the function parameters.
+        error_on_invalid_docstring: Whether to raise an error on invalid docstring.
+
+    Returns:
+        A tuple containing the function description and argument descriptions.
+    """
+    docstring = inspect.getdoc(function)
+    return _parse_google_docstring(
+        docstring,
+        list(annotations),
+        error_on_invalid_docstring=error_on_invalid_docstring,
+    )
+
+
+def _validate_docstring_args_against_annotations(
+    arg_descriptions: dict, annotations: dict
+) -> None:
+    """Validate that docstring arguments match function annotations.
+
+    Args:
+        arg_descriptions: Arguments described in the docstring.
+        annotations: Type annotations from the function signature.
+
+    Raises:
+        ValueError: If a docstring argument is not found in function signature.
+    """
+    for docstring_arg in arg_descriptions:
+        if docstring_arg not in annotations:
+            msg = f"Arg {docstring_arg} in docstring not found in function signature."
+            raise ValueError(msg)
+
+
+def _infer_arg_descriptions(
+    fn: Callable,
+    *,
+    parse_docstring: bool = False,
+    error_on_invalid_docstring: bool = False,

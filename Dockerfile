@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3 \
     ca-certificates \
+    tree \
     && rm -rf /var/lib/apt/lists/*
 
 # Allow non-root processes to mount FUSE with allow_other.

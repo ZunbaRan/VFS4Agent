@@ -46,7 +46,23 @@ export interface GrepOptions {
   limit?: number;
 }
 
+export interface VectorStoreCapabilities {
+  /** Supports searchText() for coarse text filtering. */
+  supportsTextSearch?: boolean;
+  /** Supports native regex in searchText (e.g. Chroma $regex). */
+  supportsRegex?: boolean;
+  /** Supports bulkGetChunksByPages() for batch prefetch. */
+  supportsBulkPrefetch?: boolean;
+  /** PathTree entries have accurate line counts (for wc -l optimization). */
+  hasLineCounts?: boolean;
+  /** PathTree entries have accurate byte sizes (for wc -c / du optimization). */
+  hasByteSizes?: boolean;
+}
+
 export interface VectorStore {
+  /** Runtime capability introspection. Optimizers check this before executing. */
+  readonly capabilities?: VectorStoreCapabilities;
+
   getPathTree(): Promise<PathTree>;
   upsertPathTree(tree: PathTree): Promise<void>;
 

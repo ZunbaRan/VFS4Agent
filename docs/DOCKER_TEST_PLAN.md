@@ -13,7 +13,7 @@
 ```bash
 DASHSCOPE_API_KEY=sk-7d82264e78b34a8dae8c29a3b2bf2ddc
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_MODEL=qwen3.6-plus
+QWEN_MODEL=qwen-plus
 ```
 
 这些环境变量需要在 `docker-compose run` 时传入容器。
@@ -255,7 +255,7 @@ import('./dist/fuse/index.js').then(async ({ mount }) => {
 docker compose run --rm -it vfs-agent \
   -e DASHSCOPE_API_KEY=sk-7d82264e78b34a8dae8c29a3b2bf2ddc \
   -e DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
-  -e QWEN_MODEL=qwen3.6-plus \
+  -e QWEN_MODEL=qwen-plus \
   node dist/agent/main.js
 ```
 
@@ -337,7 +337,7 @@ You> quit
 docker compose run --rm -it vfs-agent \
   -e DASHSCOPE_API_KEY=sk-7d82264e78b34a8dae8c29a3b2bf2ddc \
   -e DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
-  -e QWEN_MODEL=qwen3.6-plus \
+  -e QWEN_MODEL=qwen-plus \
   node dist/cli/ask.js "OAuth 认证流程是什么？"
 ```
 

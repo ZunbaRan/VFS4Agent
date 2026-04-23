@@ -24,6 +24,7 @@ import type {
   GrepOptions,
   PathTree,
   VectorStore,
+  VectorStoreCapabilities,
 } from "../types.js";
 
 const PATH_TREE_ID = "__path_tree__";
@@ -44,6 +45,14 @@ export interface ChromaVectorStoreOptions {
 }
 
 export class ChromaVectorStore implements VectorStore {
+  readonly capabilities = {
+    supportsTextSearch: true,
+    supportsRegex: true, // Chroma supports $regex on whereDocument
+    supportsBulkPrefetch: true,
+    hasLineCounts: true,
+    hasByteSizes: true,
+  } satisfies VectorStoreCapabilities;
+
   private client: ChromaClient;
   private collectionName: string;
   private embedder: EmbeddingFunction;
