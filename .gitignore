@@ -11,6 +11,6 @@ data/
 .DS_Store
 **/__pycache__/
 *.pyc
-.venv/
+.venv*/
 venv/
-.env
+*.egg-info/
