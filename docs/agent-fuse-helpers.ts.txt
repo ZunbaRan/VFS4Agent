@@ -1,0 +1,105 @@
+import { eq } from "drizzle-orm";
+import { db } from "../db/index.js";
+import { foldersTable, emailsTable, contactsTable } from "../db/schema.js";
+
+export type EmailWithSender = {
+  id: number;
+  subject: string;
+  body: string;
+  sentAt: Date;
+  folderId: number;
+  folderPath: string;
+  starred: boolean;
+  needsAction: boolean;
+  senderEmail: string;
+};
+
+export function emailToFilename(email: EmailWithSender): string {
+  return `${email.subject} (${email.senderEmail}).eml`;
+}
+
+export function emailToContent(email: EmailWithSender): string {
+  return `From: ${email.senderEmail}
+Date: ${email.sentAt.toISOString()}
+Subject: ${email.subject}
+X-Folder: ${email.folderPath}
+X-Starred: ${email.starred}
+X-Needs-Action: ${email.needsAction}
+
+${email.body}
+`;
+}
+
+export async function getEmailsWithSender() {
+  const results = await db
+    .select({
+      id: emailsTable.id,
+      subject: emailsTable.subject,
+      body: emailsTable.body,
+      sentAt: emailsTable.sentAt,
+      folderId: emailsTable.folderId,
+      folderPath: foldersTable.path,
+      starred: emailsTable.starred,
+      needsAction: emailsTable.needsAction,
+      senderEmail: contactsTable.email,
+    })
+    .from(emailsTable)
+    .innerJoin(contactsTable, eq(emailsTable.sender, contactsTable.id))
+    .innerJoin(foldersTable, eq(emailsTable.folderId, foldersTable.id));
+
+  return results;
+}
+
+export const VIRTUAL_FOLDERS: Record<string, (email: EmailWithSender) => boolean> = {
+  "/Starred": (e) => e.starred,
+  "/Needs_Action": (e) => e.needsAction,
+};
+
+export async function getFolder(path: string) {
+  if (VIRTUAL_FOLDERS[path]) return { id: -1, path };
+  const [folder] = await db.select().from(foldersTable).where(eq(foldersTable.path, path));
+  return folder;
+}
+
+export async function isDirectory(path: string) {
+  const folder = await getFolder(path);
+  return !!folder;
+}
+
+export async function getEmailByPath(path: string): Promise<EmailWithSender | undefined> {
+  const lastSlash = path.lastIndexOf("/");
+  const dirPath = lastSlash === 0 ? "/" : path.slice(0, lastSlash);
+  const filename = path.slice(lastSlash + 1);
+
+  const emails = await getEmailsWithSender();
+
+  if (VIRTUAL_FOLDERS[dirPath]) {
+    const filtered = emails.filter(VIRTUAL_FOLDERS[dirPath]);
+    return filtered.find((e) => emailToFilename(e) === filename);
+  }
+
+  const folder = await getFolder(dirPath);
+  if (!folder) return undefined;
+
+  return emails.find((e) => e.folderId === folder.id && emailToFilename(e) === filename);
+}
+
+export async function getEmailById(id: number): Promise<EmailWithSender | undefined> {
+  const results = await db
+  .select({
+    id: emailsTable.id,
+    subject: emailsTable.subject,
+    body: emailsTable.body,
+    sentAt: emailsTable.sentAt,
+    folderId: emailsTable.folderId,
+    folderPath: foldersTable.path,
+    starred: emailsTable.starred,
+    needsAction: emailsTable.needsAction,
+    senderEmail: contactsTable.email,
+  })
+  .from(emailsTable)
+  .innerJoin(contactsTable, eq(emailsTable.sender, contactsTable.id))
+  .innerJoin(foldersTable, eq(emailsTable.folderId, foldersTable.id))
+  .where(eq(emailsTable.id, id)).limit(1);
+  return results[0];
+}

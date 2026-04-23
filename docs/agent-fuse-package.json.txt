@@ -1,0 +1,26 @@
+{
+  "name": "fuse-agent",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "start": "docker compose run --rm -it --build fuse-agent"
+  },
+  "packageManager": "pnpm@10.18.0",
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "drizzle-kit": "^0.31.8",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.4",
+    "@electric-sql/pglite": "^0.3.14",
+    "drizzle-orm": "^0.45.1",
+    "fuse-native": "^2.2.6"
+  }
+}

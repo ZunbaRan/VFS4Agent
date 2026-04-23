@@ -1,0 +1,13 @@
+services:
+  fuse-agent:
+    platform: linux/amd64
+    build: .
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    stdin_open: true
+    tty: true
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
