@@ -29,6 +29,12 @@ services:
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
       - DASHSCOPE_BASE_URL=${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - VFS_MODE=${VFS_MODE:-embedded}
+      - VFS_OPTIMIZERS=${VFS_OPTIMIZERS:-}
+      - VFS_PORT=${VFS_PORT:-7801}
+      - VFS_SESSION_TOKEN=${VFS_SESSION_TOKEN:-}
+    ports:
+      - "7801:7801"
     stdin_open: true
     tty: true
     working_dir: /app

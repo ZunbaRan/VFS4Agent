@@ -24,6 +24,7 @@ import { createBackend } from "../backend/factory.js";
 import { mount } from "../fuse/index.js";
 import { runAgentTurn } from "../agent/adapters/openai.js";
 import { createBashRunner } from "../agent/bash.js";
+import { buildRegistryFromEnv } from "../agent/commands/index.js";
 
 interface Args {
   question?: string;
@@ -80,7 +81,8 @@ async function main(): Promise<void> {
   if (!args.quiet) console.error(`[ask] backend=${label}, mount=${mountPoint}`);
 
   const m = await mount({ store, mountPoint });
-  const exec = createBashRunner({ cwd: mountPoint });
+  const registry = buildRegistryFromEnv(process.env.VFS_OPTIMIZERS);
+  const exec = createBashRunner({ cwd: mountPoint, registry, store });
   const client = new OpenAI({ apiKey, baseURL });
 
   let exitCode = 0;

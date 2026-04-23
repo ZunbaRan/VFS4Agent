@@ -8,12 +8,16 @@ import * as readline from "node:readline";
 import OpenAI from "openai";
 import { runAgentTurn, type AgentStep } from "./adapters/openai.js";
 import { createBashRunner } from "./bash.js";
+import type { OptimizerRegistry } from "./commands/types.js";
+import type { VectorStore } from "../types.js";
 
 export interface ReplOptions {
   cwd: string;
   model: string;
   baseURL?: string;
   apiKey: string;
+  registry?: OptimizerRegistry;
+  store?: VectorStore;
 }
 
 function printStep(step: AgentStep): void {
@@ -31,7 +35,11 @@ function printStep(step: AgentStep): void {
 
 export async function startRepl(opts: ReplOptions): Promise<void> {
   const client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL });
-  const exec = createBashRunner({ cwd: opts.cwd });
+  const exec = createBashRunner({
+    cwd: opts.cwd,
+    registry: opts.registry,
+    store: opts.store,
+  });
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   rl.on("close", () => {
