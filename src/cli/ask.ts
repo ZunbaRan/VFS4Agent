@@ -1,40 +1,48 @@
 #!/usr/bin/env tsx
 /**
- * ask — Shell-Native docs question answering.
+ * ask — single-shot question answering against the FUSE-mounted docs.
+ *
+ * Mounts the FUSE filesystem at a temp path (or VFS_MOUNT), runs one agent
+ * turn, prints the answer, then unmounts.
  *
  * Usage:
  *   pnpm ask "how do I authenticate with OAuth?"
  *   pnpm ask --model qwen-plus --max-turns 15 "..."
  *
- * Reads DashScope credentials from env (see examples/crewai-qwen-demo/.env
- * for an example) or from process env directly:
- *   DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL (optional), QWEN_MODEL (optional)
+ * Env (any one of the following pairs):
+ *   OPENAI_API_KEY   [+ OPENAI_BASE_URL] [+ OPENAI_MODEL]
+ *   DASHSCOPE_API_KEY [+ DASHSCOPE_BASE_URL] [+ QWEN_MODEL]
  */
 
 import "dotenv/config";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import OpenAI from "openai";
 
 import { createBackend } from "../backend/factory.js";
-import { runShellAgent } from "../runner/shellRunner.js";
+import { mount } from "../fuse/index.js";
+import { runAgentTurn } from "../agent/adapters/openai.js";
+import { createBashRunner } from "../agent/bash.js";
 
-function parseArgs(argv: string[]) {
-  const out: {
-    question?: string;
-    db?: string;
-    mount?: string;
-    model?: string;
-    maxTurns?: number;
-    maxOutputBytes?: number;
-    quiet?: boolean;
-  } = {};
+interface Args {
+  question?: string;
+  mount?: string;
+  model?: string;
+  baseURL?: string;
+  maxTurns?: number;
+  quiet?: boolean;
+}
+
+function parseArgs(argv: string[]): Args {
+  const out: Args = {};
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--db") out.db = argv[++i];
-    else if (a === "--mount") out.mount = argv[++i];
+    if (a === "--mount") out.mount = argv[++i];
     else if (a === "--model") out.model = argv[++i];
+    else if (a === "--base-url") out.baseURL = argv[++i];
     else if (a === "--max-turns") out.maxTurns = Number(argv[++i]);
-    else if (a === "--max-output") out.maxOutputBytes = Number(argv[++i]);
     else if (a === "--quiet" || a === "-q") out.quiet = true;
     else rest.push(a);
   }
@@ -42,82 +50,67 @@ function parseArgs(argv: string[]) {
   return out;
 }
 
-async function main() {
+function pickEnv(...names: string[]): string | undefined {
+  for (const n of names) {
+    const v = process.env[n];
+    if (v && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.question) {
     console.error('usage: pnpm ask "<your question>"');
     process.exit(2);
   }
 
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const apiKey = pickEnv("OPENAI_API_KEY", "DASHSCOPE_API_KEY");
   if (!apiKey) {
-    console.error(
-      "error: DASHSCOPE_API_KEY not set. Put it in .env or export it.",
-    );
-    process.exit(2);
-  }
-
-  const llm = new OpenAI({
-    apiKey,
-    baseURL:
-      process.env.DASHSCOPE_BASE_URL ??
-      "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  });
-  const model = args.model ?? process.env.QWEN_MODEL ?? "qwen-plus";
-
-  // --db always implies sqlite. Without --db, honour VFS_BACKEND env (default
-  // "chroma"). Avoids the footgun where `--db ./x.db` silently talked to a
-  // Chroma server because VFS_BACKEND wasn't flipped.
-  const { store, label } = args.db
-    ? createBackend({ backend: "sqlite", sqlitePath: args.db })
-    : createBackend();
-
-  if (!args.quiet) {
-    console.error(`[ask] model=${model}  backend=${label}  mount=${args.mount ?? "/docs"}`);
-    console.error(`[ask] question: ${args.question}`);
-    console.error("—".repeat(60));
-  }
-
-  const result = await runShellAgent({
-    question: args.question,
-    store,
-    llm,
-    model,
-    mountPoint: args.mount ?? "/docs",
-    maxTurns: args.maxTurns ?? 20,
-    maxOutputBytes: args.maxOutputBytes ?? 4096,
-    onTurn: args.quiet
-      ? undefined
-      : (t) => {
-          process.stderr.write(`\n[turn ${t.n}] $ ${t.command}\n`);
-          const preview = truncateForLog(t.stdout + (t.stderr ? `\n${t.stderr}` : ""), 800);
-          if (preview) process.stderr.write(preview.replace(/^/gm, "  "));
-          if (t.exitCode) process.stderr.write(`  [exit ${t.exitCode}]\n`);
-        },
-  });
-
-  if (!args.quiet) {
-    console.error("\n" + "—".repeat(60));
-    console.error(`[ask] turns=${result.transcript.length} reason=${result.reason}`);
-  }
-
-  if (result.answer) {
-    process.stdout.write(result.answer.replace(/\n?$/, "\n"));
-    process.exit(0);
-  } else {
-    console.error(`[ask] no answer: ${result.reason}`);
+    console.error("error: OPENAI_API_KEY (or DASHSCOPE_API_KEY) not set");
     process.exit(1);
   }
-}
+  const model = args.model ?? pickEnv("OPENAI_MODEL", "QWEN_MODEL") ?? "gpt-4o-mini";
+  const baseURL = args.baseURL ?? pickEnv("OPENAI_BASE_URL", "DASHSCOPE_BASE_URL");
 
-function truncateForLog(s: string, maxBytes: number): string {
-  if (!s) return "";
-  const buf = Buffer.from(s, "utf8");
-  if (buf.length <= maxBytes) return s.endsWith("\n") ? s : s + "\n";
-  return (
-    buf.subarray(0, maxBytes).toString("utf8").replace(/[^\n]*$/, "") +
-    `  ... [+${buf.length - maxBytes}B]\n`
-  );
+  const mountPoint =
+    args.mount ?? process.env.VFS_MOUNT ?? fs.mkdtempSync(path.join(os.tmpdir(), "vfs4agent-"));
+
+  const { store, label } = createBackend();
+  if (!args.quiet) console.error(`[ask] backend=${label}, mount=${mountPoint}`);
+
+  const m = await mount({ store, mountPoint });
+  const exec = createBashRunner({ cwd: mountPoint });
+  const client = new OpenAI({ apiKey, baseURL });
+
+  let exitCode = 0;
+  try {
+    const answer = await runAgentTurn({
+      client,
+      model,
+      question: args.question,
+      exec,
+      maxTurns: args.maxTurns ?? 12,
+      onStep: args.quiet
+        ? undefined
+        : (step) => {
+            if (step.type === "tool_call") process.stderr.write(`\n$ ${step.command}\n`);
+            else if (step.type === "tool_result") {
+              if (step.result.exitCode !== 0) {
+                process.stderr.write(`[exit ${step.result.exitCode}]\n`);
+              }
+            }
+          },
+    });
+    process.stdout.write(answer.endsWith("\n") ? answer : answer + "\n");
+  } catch (e) {
+    console.error("ask failed:", (e as Error).message);
+    exitCode = 1;
+  } finally {
+    await m.unmount();
+    store.close();
+  }
+  process.exit(exitCode);
 }
 
 main().catch((e) => {

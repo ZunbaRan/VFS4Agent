@@ -1,126 +1,82 @@
 /**
- * Fastify HTTP bridge for non-TS Agent frameworks (CrewAI, LangChain Python, ...).
+ * Optional HTTP bridge for non-TS Agent frameworks (CrewAI, LangChain Python, ...).
  *
- * Endpoints (all JSON):
- *   POST /v1/bash       { command }          -> { stdout, stderr, exitCode }
- *   POST /v1/fs/ls      { path }             -> { entries: DirentEntry[] }
- *   POST /v1/fs/cat     { path }             -> { content }
- *   POST /v1/fs/grep    { pattern, path, ignoreCase?, regex?, listFilesOnly? }
- *   GET  /v1/health
- *
- * Auth (optional): `X-VFS-Session: <token>` compared to VFS_SESSION_TOKEN env.
+ * In the FUSE-first architecture this server is a thin wrapper over the
+ * VectorStore — it does NOT spawn a shell or interact with the FUSE mount.
+ * Frameworks that want bash semantics should run inside the same container as
+ * the FUSE mount and shell out directly. This bridge is for use cases where
+ * the agent only needs cheap read access (ls/cat/search).
  */
 
+import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { createBackend } from "./backend/factory.js";
-import { createShell } from "./shell.js";
+import {
+  assembleChunks,
+  fusePathToSlug,
+  getDirectoryEntries,
+  isDirectoryInTree,
+} from "./fuse/helpers.js";
 
-const MOUNT = process.env.VFS_MOUNT ?? "/docs";
 const PORT = Number(process.env.VFS_PORT ?? 7801);
 const TOKEN = process.env.VFS_SESSION_TOKEN;
 
 const { store, label: backendLabel } = createBackend();
-const { bash, vfs } = createShell({ store, mountPoint: MOUNT });
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 await app.register(cors, { origin: true });
 
 app.addHook("onRequest", async (req, reply) => {
   if (!TOKEN) return;
-  const header = req.headers["x-vfs-session"];
-  if (header !== TOKEN) {
+  if (req.headers["x-vfs-session"] !== TOKEN) {
     reply.code(401).send({ error: "unauthorized" });
   }
 });
 
-app.get("/v1/health", async () => ({ ok: true, mount: MOUNT, backend: backendLabel }));
+app.get("/v1/health", async () => ({ ok: true, backend: backendLabel }));
 
-app.post<{ Body: { command: string } }>(
-  "/v1/bash",
-  async (req, reply) => {
-    const { command } = req.body ?? ({} as { command: string });
-    if (typeof command !== "string") {
-      return reply.code(400).send({ error: "command must be a string" });
-    }
-    const r = await bash.exec(command);
-    return { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode };
-  },
-);
+app.post<{ Body: { path: string } }>("/v1/fs/ls", async (req, reply) => {
+  const p = req.body?.path;
+  if (typeof p !== "string") return reply.code(400).send({ error: "path required" });
+  const tree = await store.getPathTree();
+  const slug = fusePathToSlug(p);
+  if (slug !== "" && !isDirectoryInTree(slug, tree) && !tree[slug]) {
+    return reply.code(404).send({ error: "ENOENT" });
+  }
+  return { entries: getDirectoryEntries(slug, tree) };
+});
 
-app.post<{ Body: { path: string } }>(
-  "/v1/fs/ls",
-  async (req, reply) => {
-    const { path: p } = req.body ?? ({} as { path: string });
-    if (typeof p !== "string") return reply.code(400).send({ error: "path required" });
-    try {
-      const entries = await vfs.readdirWithFileTypes(vfs.toMountRelative(p));
-      return { entries };
-    } catch (e) {
-      return reply
-        .code(404)
-        .send({ error: (e as Error).message, code: (e as { code?: string }).code });
-    }
-  },
-);
-
-app.post<{ Body: { path: string } }>(
-  "/v1/fs/cat",
-  async (req, reply) => {
-    const { path: p } = req.body ?? ({} as { path: string });
-    if (typeof p !== "string") return reply.code(400).send({ error: "path required" });
-    try {
-      const content = await vfs.readFile(vfs.toMountRelative(p), "utf8");
-      return { content };
-    } catch (e) {
-      return reply
-        .code(404)
-        .send({ error: (e as Error).message, code: (e as { code?: string }).code });
-    }
-  },
-);
+app.post<{ Body: { path: string } }>("/v1/fs/cat", async (req, reply) => {
+  const p = req.body?.path;
+  if (typeof p !== "string") return reply.code(400).send({ error: "path required" });
+  const slug = fusePathToSlug(p);
+  const tree = await store.getPathTree();
+  if (!tree[slug]) return reply.code(404).send({ error: "ENOENT" });
+  const chunks = await store.getChunksByPage(slug);
+  return { content: assembleChunks(chunks) };
+});
 
 app.post<{
   Body: {
     pattern: string;
-    path?: string;
+    prefix?: string;
     ignoreCase?: boolean;
     regex?: boolean;
-    listFilesOnly?: boolean;
+    limit?: number;
   };
 }>("/v1/fs/grep", async (req, reply) => {
-  const { pattern, path: p, ignoreCase, regex, listFilesOnly } = req.body ?? {};
-  if (typeof pattern !== "string") {
-    return reply.code(400).send({ error: "pattern required" });
-  }
-  // grep runs inside the shell sandbox — it expects a shell-absolute path.
-  // Accept both mount-rooted and mount-relative inputs by promoting the latter.
-  const target = resolveShellPath(p ?? MOUNT, MOUNT);
-  const flags: string[] = ["-rn"];
-  if (ignoreCase) flags.push("-i");
-  if (listFilesOnly) flags.push("-l");
-  if (regex === false) flags.push("-F");
-  const cmd = `grep ${flags.join(" ")} ${shellQuote(pattern)} ${shellQuote(target)}`;
-  const r = await bash.exec(cmd);
-  return { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode };
+  const { pattern, prefix, ignoreCase, regex, limit } = req.body ?? {};
+  if (typeof pattern !== "string") return reply.code(400).send({ error: "pattern required" });
+  const slugs = await store.searchText({
+    pattern,
+    pathPrefix: prefix,
+    ignoreCase,
+    regex,
+    limit: limit ?? 50,
+  });
+  return { slugs };
 });
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-/**
- * Turn a caller path into a shell-absolute path. If the caller passed a
- * mount-relative path (e.g. `auth/oauth.md` or `/auth/oauth.md`), prepend the
- * mount. Paths already rooted at the mount pass through unchanged.
- */
-function resolveShellPath(p: string, mount: string): string {
-  const norm = p.startsWith("/") ? p : "/" + p;
-  if (mount === "/" || mount === "") return norm;
-  if (norm === mount || norm.startsWith(mount + "/")) return norm;
-  // Treat as mount-relative.
-  return mount + norm;
-}
 
 app
   .listen({ port: PORT, host: "0.0.0.0" })

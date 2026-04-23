@@ -11,7 +11,7 @@ import type {
   PathTree,
   PathTreeEntry,
   VectorStore,
-} from "../types.js";
+} from "./types.js";
 
 export interface IngestOptions {
   rootDir: string;
