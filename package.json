@@ -6,7 +6,7 @@
   "description": "FUSE-based virtual filesystem over a vector DB for LLM agents",
   "scripts": {
     "build": "tsc",
-    "test": "node --test --import tsx src/**/*.test.ts",
+    "test": "node --test --import tsx 'src/**/*.test.ts' 'examples/**/*.test.ts'",
     "ingest": "tsx src/cli/ingest.ts",
     "server": "tsx src/server.ts",
     "ask": "tsx src/cli/ask.ts",
