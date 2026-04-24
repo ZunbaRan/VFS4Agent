@@ -1,8 +1,19 @@
 # Provider Plugin System — Design
 
-> Status: **design, not yet implemented**
+> Status: **implemented — all 4 steps landed on `feat/provider-plugin-system`**
 > Branch: `feat/provider-plugin-system`
 > Author: 2026-04-24
+>
+> Commits on this branch:
+>   - `66516cb`  design doc (this file)
+>   - `78b1938`  Step 1 — provider/ foundation (VfsProvider, MountRouter, VectorStoreProvider, 9 tests)
+>   - `df393c1`  Step 2 — FUSE ops routed through MountRouter (3 search tests)
+>   - Step 3     — YAML config + plugin-loader + server wiring (13 loader tests)
+>   - Step 4     — JSONPlaceholder example provider (8 tests incl. router integration)
+>
+> 35 unit tests total, all green. Build (`pnpm build`) clean.
+> Real FUSE verification still pending a Linux/Docker run — everything above
+> runs without FUSE because providers are pure TS.
 
 ---
 
