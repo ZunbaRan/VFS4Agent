@@ -2,16 +2,15 @@ import Fuse from "fuse-native";
 import {
   allocHandle,
   getCachedContent,
-  getContext,
-  getPathTree,
+  getRouter,
+  getVfsContext,
   setCachedContent,
 } from "../context.js";
-import { fusePathToSlug, assembleChunks } from "../helpers.js";
+import { isVfsError } from "../../provider/types.js";
 import { getResultByPath, isResultPath, getLastQueryContent } from "../search.js";
 
 // POSIX flag bits we care about.
 const O_ACCMODE = 0o0003;
-const O_RDONLY = 0o0000;
 const O_WRONLY = 0o0001;
 const O_RDWR = 0o0002;
 const O_TRUNC = 0o1000;
@@ -61,23 +60,26 @@ export async function open(
 
     if (path.startsWith("/search/")) return cb(Fuse.ENOENT);
 
-    // PathTree-backed file — read-only.
+    // Provider-backed file — read-only for now.
     if (mode !== "r") return cb(Fuse.EROFS);
 
-    const slug = fusePathToSlug(path);
-    const tree = await getPathTree();
-    if (!tree[slug]) return cb(Fuse.ENOENT);
-
-    let content = getCachedContent(slug);
+    let content = getCachedContent(path);
     if (content === undefined) {
-      const chunks = await getContext().store.getChunksByPage(slug);
-      content = assembleChunks(chunks);
-      setCachedContent(slug, content);
+      const router = getRouter();
+      const ctx = getVfsContext();
+      const r = await router.read(path, ctx);
+      content = r.content;
+      setCachedContent(path, content);
     }
 
     const fd = allocHandle({ path, content, writable: false, searchQueryWrite: false });
     cb(0, fd);
   } catch (e) {
+    if (isVfsError(e)) {
+      if (e.code === "ENOENT") return cb(Fuse.ENOENT);
+      if (e.code === "EISDIR") return cb(Fuse.EISDIR);
+      if (e.code === "EACCES") return cb(Fuse.EACCES);
+    }
     console.error("[fuse] open error:", path, (e as Error).message);
     cb(Fuse.EIO);
   }

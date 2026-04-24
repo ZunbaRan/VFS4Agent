@@ -54,8 +54,12 @@ declare module "fuse-native" {
     static readonly EACCES: number;
     static readonly EIO: number;
     static readonly ENOTDIR: number;
+    static readonly EISDIR: number;
     static readonly EEXIST: number;
     static readonly EPERM: number;
     static readonly ENOTSUP: number;
+    static readonly EINVAL: number;
+    static readonly ENOSYS: number;
+    static readonly ENAMETOOLONG: number;
   }
 }

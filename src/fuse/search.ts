@@ -8,14 +8,18 @@
  *       002_<slug>.md
  *       ...
  *
+ * Routes through `MountRouter.search()` + `MountRouter.read()` so it sees the
+ * union of all mounted providers.
  * State is process-global (single-tenant Agent sandbox).
  */
 
-import type { VectorStore } from "../types.js";
-import { assembleChunks, utf8ByteLength } from "./helpers.js";
+import { utf8ByteLength } from "./helpers.js";
+import type { MountRouter } from "../provider/router.js";
+import type { VfsContext } from "../provider/types.js";
+import { isVfsError } from "../provider/types.js";
 
 export interface SearchResult {
-  slug: string;
+  slug: string; // absolute VFS path, minus leading slash
   filename: string;
   content: string;
 }
@@ -32,7 +36,6 @@ const state: SearchState = {
   results: [],
 };
 
-/** Header lines shown when reading /search/last_query (always at least one byte). */
 function lastQueryContent(): string {
   return state.query ? state.query + "\n" : "";
 }
@@ -49,12 +52,10 @@ export function getLastQueryMtime(): Date {
   return state.mtime;
 }
 
-/** Listing for /search/results. */
 export function listResultFilenames(): string[] {
   return state.results.map((r) => r.filename);
 }
 
-/** True iff this path looks like /search/results/<filename>. */
 export function isResultPath(path: string): boolean {
   return path.startsWith("/search/results/");
 }
@@ -66,10 +67,14 @@ export function getResultByPath(path: string): SearchResult | undefined {
 }
 
 /**
- * Trigger a new search. Replaces previous results.
- * Uses store.searchText() (M3 keyword scope; M4 will swap to embeddings).
+ * Trigger a new search via the router. Replaces previous results.
  */
-export async function runSearch(query: string, store: VectorStore, limit = 10): Promise<void> {
+export async function runSearch(
+  query: string,
+  router: MountRouter,
+  ctx: VfsContext,
+  limit = 10,
+): Promise<void> {
   const trimmed = query.trim();
   state.query = trimmed;
   state.mtime = new Date();
@@ -77,11 +82,10 @@ export async function runSearch(query: string, store: VectorStore, limit = 10): 
 
   if (!trimmed) return;
 
-  let slugs: string[] = [];
+  let hits;
   try {
-    slugs = await store.searchText({ pattern: trimmed, limit });
+    hits = await router.search({ query: trimmed, subpath: "/", maxHits: limit }, ctx);
   } catch (e) {
-    // Surface the error inside a fake result file so the agent can see it.
     state.results = [
       {
         slug: "__error__",
@@ -92,10 +96,29 @@ export async function runSearch(query: string, store: VectorStore, limit = 10): 
     return;
   }
 
+  if (!hits || hits.length === 0) return;
+
+  // De-duplicate by path (fan-out search may yield repeats across mounts).
+  const seen = new Set<string>();
   let idx = 1;
-  for (const slug of slugs) {
-    const chunks = await store.getChunksByPage(slug);
-    const content = assembleChunks(chunks);
+  for (const hit of hits) {
+    if (seen.has(hit.path)) continue;
+    seen.add(hit.path);
+    if (idx > limit) break;
+
+    let content = "";
+    try {
+      const r = await router.read(hit.path, ctx);
+      content = r.content;
+    } catch (e) {
+      if (isVfsError(e)) {
+        content = `(cannot read ${hit.path}: ${e.code} ${e.message})\n`;
+      } else {
+        content = `(error reading ${hit.path}: ${(e as Error).message})\n`;
+      }
+    }
+
+    const slug = hit.path.startsWith("/") ? hit.path.slice(1) : hit.path;
     const safeSlug = slug.replace(/[\\/]/g, "_");
     const filename = `${String(idx).padStart(3, "0")}_${safeSlug}`;
     state.results.push({ slug, filename, content });

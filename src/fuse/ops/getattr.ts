@@ -1,12 +1,17 @@
 import Fuse from "fuse-native";
-import { fusePathToSlug, isDirectoryInTree, utf8ByteLength, assembleChunks } from "../helpers.js";
-import { getCachedContent, getContext, getPathTree, setCachedContent } from "../context.js";
+import { utf8ByteLength } from "../helpers.js";
+import {
+  getCachedContent,
+  getRouter,
+  getVfsContext,
+  setCachedContent,
+} from "../context.js";
+import { isVfsError } from "../../provider/types.js";
 import {
   getLastQueryMtime,
   getLastQuerySize,
   getResultByPath,
   isResultPath,
-  listResultFilenames,
 } from "../search.js";
 
 const VIRTUAL_DIRS = new Set(["/", "/search", "/search/results"]);
@@ -24,13 +29,13 @@ function dirStat(mtime: Date = new Date()): any {
   };
 }
 
-function fileStat(size: number, mtime: Date, writable = false): any {
+function fileStat(size: number, mtime: Date): any {
   return {
     mtime,
     atime: mtime,
     ctime: mtime,
     size,
-    mode: writable ? 0o100644 : 0o100644,
+    mode: 0o100644,
     uid: process.getuid?.() ?? 0,
     gid: process.getgid?.() ?? 0,
     nlink: 1,
@@ -44,7 +49,7 @@ export async function getattr(path: string, cb: (err: number, stat?: any) => voi
 
     // 2. Search special files.
     if (path === "/search/last_query") {
-      return cb(0, fileStat(getLastQuerySize(), getLastQueryMtime(), true));
+      return cb(0, fileStat(getLastQuerySize(), getLastQueryMtime()));
     }
     if (isResultPath(path)) {
       const r = getResultByPath(path);
@@ -53,33 +58,39 @@ export async function getattr(path: string, cb: (err: number, stat?: any) => voi
     }
     if (path.startsWith("/search/")) return cb(Fuse.ENOENT);
 
-    // 3. PathTree-backed paths.
-    const tree = await getPathTree();
-    const slug = fusePathToSlug(path);
+    // 3. Provider-backed paths via router.
+    const router = getRouter();
+    const ctx = getVfsContext();
+    const stat = await router.stat(path, ctx);
+    const mtime = stat.mtime ? new Date(stat.mtime) : new Date();
 
-    const entry = tree[slug];
-    if (entry) {
-      const mtime = entry.mtime ? new Date(entry.mtime) : new Date();
-      let size = entry.size;
-      if (size === undefined) {
-        // Fall back to assembling chunks once and caching.
-        const cached = getCachedContent(slug);
-        if (cached !== undefined) {
-          size = utf8ByteLength(cached);
-        } else {
-          const chunks = await getContext().store.getChunksByPage(slug);
-          const content = assembleChunks(chunks);
-          setCachedContent(slug, content);
-          size = utf8ByteLength(content);
+    if (stat.type === "dir") return cb(0, dirStat(mtime));
+
+    // File: if size is unknown (or 0 but might be nonzero), read content once
+    // and cache so subsequent open() doesn't repeat the work.
+    let size = stat.size;
+    if (!size || size === 0) {
+      const cached = getCachedContent(path);
+      if (cached !== undefined) {
+        size = utf8ByteLength(cached);
+      } else {
+        try {
+          const r = await router.read(path, ctx);
+          setCachedContent(path, r.content);
+          size = r.size ?? utf8ByteLength(r.content);
+        } catch {
+          size = 0;
         }
       }
-      return cb(0, fileStat(size, mtime));
     }
-
-    if (isDirectoryInTree(slug, tree)) return cb(0, dirStat());
-
-    return cb(Fuse.ENOENT);
+    return cb(0, fileStat(size, mtime));
   } catch (e) {
+    if (isVfsError(e)) {
+      if (e.code === "ENOENT") return cb(Fuse.ENOENT);
+      if (e.code === "EACCES") return cb(Fuse.EACCES);
+      if (e.code === "ENOTDIR") return cb(Fuse.ENOTDIR);
+      if (e.code === "EISDIR") return cb(Fuse.EISDIR);
+    }
     console.error("[fuse] getattr error:", path, (e as Error).message);
     cb(Fuse.EIO);
   }

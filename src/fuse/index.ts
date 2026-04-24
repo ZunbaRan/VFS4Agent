@@ -18,11 +18,19 @@
 import * as fs from "node:fs";
 import Fuse from "fuse-native";
 import type { VectorStore } from "../types.js";
+import { MountRouter } from "../provider/router.js";
+import { VectorStoreProvider } from "../provider/vector-store-provider.js";
 import { ops } from "./ops/index.js";
 import { initContext } from "./context.js";
 
 export interface MountOptions {
-  store: VectorStore;
+  /**
+   * Router holding one or more mounted providers. If omitted, `store` must be
+   * provided and a default root-mount VectorStoreProvider will be constructed.
+   */
+  router?: MountRouter;
+  /** Legacy shortcut: mount a single VectorStore at "/". */
+  store?: VectorStore;
   /** Mount point (must already exist or `mkdir: true` will create it). */
   mountPoint: string;
   debug?: boolean;
@@ -32,13 +40,24 @@ export interface MountOptions {
 
 export interface Mount {
   mountPoint: string;
+  router: MountRouter;
   unmount: () => Promise<void>;
 }
 
 export async function mount(opts: MountOptions): Promise<Mount> {
-  const { store, mountPoint, debug = false, allowOther = false } = opts;
+  const { mountPoint, debug = false, allowOther = false } = opts;
 
-  initContext(store);
+  let router: MountRouter;
+  if (opts.router) {
+    router = opts.router;
+  } else if (opts.store) {
+    router = new MountRouter();
+    router.mount(new VectorStoreProvider(opts.store, { mountPrefix: "/" }));
+  } else {
+    throw new Error("mount: either `router` or `store` must be provided");
+  }
+
+  initContext(router);
 
   fs.mkdirSync(mountPoint, { recursive: true });
 
@@ -63,5 +82,5 @@ export async function mount(opts: MountOptions): Promise<Mount> {
       });
     });
 
-  return { mountPoint, unmount };
+  return { mountPoint, router, unmount };
 }

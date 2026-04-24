@@ -1,14 +1,16 @@
 /**
  * Shared mutable state for FUSE operations.
  *
- * Holds:
- *  - VectorStore reference
- *  - PathTree cache (refreshed lazily; readdir/getattr both touch it)
- *  - Open-file table (fd -> buffered content + write flag)
+ * After the Provider-plugin refactor:
+ *   - the sole data source is a `MountRouter` (holding one or more providers)
+ *   - per-slug content cache + open-file table live here
+ *   - there is no longer a FUSE-level PathTree cache; each VectorStoreProvider
+ *     owns its own tree cache internally.
  */
 
 import { LRUCache } from "lru-cache";
-import type { PathTree, VectorStore } from "../types.js";
+import type { MountRouter } from "../provider/router.js";
+import { anonymousContext, type VfsContext } from "../provider/types.js";
 
 export interface OpenHandle {
   path: string;
@@ -21,14 +23,10 @@ export interface OpenHandle {
 }
 
 export interface FuseContext {
-  store: VectorStore;
-  /** Time-to-live (ms) for the cached PathTree. */
-  pathTreeTtlMs: number;
+  router: MountRouter;
+  /** Default VfsContext used when no session info is available. */
+  defaultVfsContext: VfsContext;
 }
-
-const PATH_TREE_TTL_MS = 2_000;
-
-let pathTreeCache: { tree: PathTree; expires: number } | null = null;
 
 let nextFd = 100; // start above stdio
 const handles = new Map<number, OpenHandle>();
@@ -37,8 +35,8 @@ const contentCache = new LRUCache<string, string>({ max: 256 });
 
 let ctx: FuseContext | null = null;
 
-export function initContext(store: VectorStore): FuseContext {
-  ctx = { store, pathTreeTtlMs: PATH_TREE_TTL_MS };
+export function initContext(router: MountRouter): FuseContext {
+  ctx = { router, defaultVfsContext: anonymousContext("fuse") };
   return ctx;
 }
 
@@ -47,27 +45,25 @@ export function getContext(): FuseContext {
   return ctx;
 }
 
-export async function getPathTree(forceRefresh = false): Promise<PathTree> {
-  const now = Date.now();
-  if (!forceRefresh && pathTreeCache && pathTreeCache.expires > now) {
-    return pathTreeCache.tree;
-  }
-  const tree = await getContext().store.getPathTree();
-  pathTreeCache = { tree, expires: now + getContext().pathTreeTtlMs };
-  return tree;
+export function getRouter(): MountRouter {
+  return getContext().router;
 }
 
-export function invalidatePathTree(): void {
-  pathTreeCache = null;
+export function getVfsContext(): VfsContext {
+  return getContext().defaultVfsContext;
 }
 
-/** Cache assembled file content keyed by slug. */
-export function getCachedContent(slug: string): string | undefined {
-  return contentCache.get(slug);
+/** Cache assembled file content keyed by absolute VFS path. */
+export function getCachedContent(absPath: string): string | undefined {
+  return contentCache.get(absPath);
 }
 
-export function setCachedContent(slug: string, content: string): void {
-  contentCache.set(slug, content);
+export function setCachedContent(absPath: string, content: string): void {
+  contentCache.set(absPath, content);
+}
+
+export function invalidateContentCache(): void {
+  contentCache.clear();
 }
 
 export function allocHandle(handle: OpenHandle): number {
