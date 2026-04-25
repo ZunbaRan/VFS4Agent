@@ -1,4 +1,4 @@
-import { freeHandle, getContext } from "../context.js";
+import { freeHandle, getRouter, getVfsContext } from "../context.js";
 import { runSearch } from "../search.js";
 
 /**
@@ -11,7 +11,7 @@ export async function release(_path: string, fd: number, cb: (err: number) => vo
   if (!h) return cb(0);
   if (h.searchQueryWrite) {
     try {
-      await runSearch(h.content, getContext().store);
+      await runSearch(h.content, getRouter(), getVfsContext());
     } catch (e) {
       console.error("[fuse] search trigger failed:", (e as Error).message);
     }

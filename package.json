@@ -6,6 +6,7 @@
   "description": "FUSE-based virtual filesystem over a vector DB for LLM agents",
   "scripts": {
     "build": "tsc",
+    "test": "node --test --import tsx 'src/**/*.test.ts' 'examples/**/*.test.ts'",
     "ingest": "tsx src/cli/ingest.ts",
     "server": "tsx src/server.ts",
     "ask": "tsx src/cli/ask.ts",
@@ -22,7 +23,8 @@
     "fastify": "^5.2.0",
     "fuse-native": "^2.2.6",
     "lru-cache": "^11.0.2",
-    "openai": "^6.34.0"
+    "openai": "^6.34.0",
+    "yaml": "^2.8.3"
   },
   "optionalDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.4"

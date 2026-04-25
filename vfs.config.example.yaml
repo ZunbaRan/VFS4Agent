@@ -1,0 +1,24 @@
+# Example vfs.config.yaml — describes which Providers to mount and where.
+#
+# Enable with:  VFS_CONFIG=./vfs.config.yaml pnpm server
+#
+# Env-var interpolation uses ${NAME} and ${NAME:default}. Strict by default
+# (missing variables throw); supply a default to relax.
+
+providers:
+  # Built-in: wraps the legacy VectorStore (Chroma or SQLite) as a Provider.
+  - name: docs
+    mountPrefix: /docs
+    driver: builtin:vector-store
+    config:
+      backend: ${VFS_BACKEND:sqlite}
+      path: ${VFS_SQLITE_PATH:./data/vfs.db}
+
+  # External Provider — any relative path is resolved from this file's dir.
+  # Uncomment once ./examples/providers/jsonplaceholder/provider.ts is built.
+  #
+  # - name: jsonplaceholder
+  #   mountPrefix: /api
+  #   driver: ./examples/providers/jsonplaceholder/provider.ts
+  #   config:
+  #     baseUrl: https://jsonplaceholder.typicode.com
